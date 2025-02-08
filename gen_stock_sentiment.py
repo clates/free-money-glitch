@@ -33,9 +33,6 @@ class SentimentResult(BaseModel):
     summary: str
     sources: List[str]
 
-class SentimentAnalysis(BaseModel):
-    results: List[SentimentResult]
-
 # Define custom system prompt
 class MySystemPrompt(SystemPrompt):
     def important_rules(self) -> str:
@@ -84,7 +81,7 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
             sentiment_result = {"results": [sentiment_result]}  # Wrap it in a list
             
         try:
-            parsed: SentimentAnalysis = SentimentAnalysis.model_validate_json(sentiment_result)
+            parsed: SentimentResult = SentimentResult.model_validate_json(sentiment_result)
         except Exception as e:
             logging.error(f"❌ ERROR: Failed to parse sentiment data for {company_name} ({company_ticker})")
             logging.error(f"📅 Date: {date}")
@@ -107,7 +104,7 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
             logging.info(f"📊 Sentiment Score: {result.sentiment_score}")
             logging.info(f"📝 Summary: {result.summary}")
         
-            filename = f"sentiment_analysis_results_{start_date_str}.json"
+            filename = f"sentiment_analysis_results_{company_name}.json"
             with open(filename, "w") as f:
                 json.dump(result, f, indent=4)
 
