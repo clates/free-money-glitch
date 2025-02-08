@@ -1,0 +1,6 @@
+logs/
+gifs/
+sentiment_logs/
+.venv/
+__pycache__/
+.env
