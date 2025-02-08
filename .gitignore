@@ -5,3 +5,4 @@ sentiment_logs/
 __pycache__/
 .env
 sentiment_analysis*.json
+output/

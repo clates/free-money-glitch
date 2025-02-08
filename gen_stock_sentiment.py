@@ -1,5 +1,6 @@
 import json
 import asyncio
+import logging.handlers
 import time
 import os
 import logging
@@ -12,9 +13,17 @@ from pydantic import BaseModel
 from typing import List
 
 # Set up logging to both console and file
-log_dir = "sentiment_logs"
+out_dir = "output"
+log_time = time.strftime('%Y%m%d_%H%M')
+log_dir = os.path.join(out_dir, log_time, "sentiment_logs")
+gif_dir = os.path.join(out_dir, log_time, "gifs")
+convo_dir = os.path.join(out_dir, log_time, "chat_logs")
+
 os.makedirs(log_dir, exist_ok=True)  # Ensure the log directory exists
-log_filename = os.path.join(f"sentiment_logs/output_{time.strftime('%Y%m%d_%H%M%S')}.log")
+os.makedirs(gif_dir, exist_ok=True)  # Ensure the log directory exists
+os.makedirs(convo_dir, exist_ok=True)  # Ensure the log directory exists
+
+log_filename = os.path.join(log_dir, "output.log")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +35,8 @@ logging.basicConfig(
 )
 
 # Define the structure of the expected JSON output
+
+
 class SentimentResult(BaseModel):
     company_name: str
     company_ticker: str
@@ -34,6 +45,8 @@ class SentimentResult(BaseModel):
     sources: List[str]
 
 # Define custom system prompt
+
+
 class MySystemPrompt(SystemPrompt):
     def important_rules(self) -> str:
         existing_rules = super().important_rules()
@@ -45,12 +58,16 @@ class MySystemPrompt(SystemPrompt):
 - REMEMBER - your response must be valid JSON with the required fields.
 """
         return f'{existing_rules}\n{new_rules}'
-    
+
+
 # Initialize the model
 # llm = ChatOpenAI(model="gpt-4o")
 # gemini is hella cheap
-executor_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-001", api_key=SecretStr(os.getenv("GEMINI_API_KEY")))
-planner_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-thinking-exp-01-21", api_key=SecretStr(os.getenv("GEMINI_API_KEY")))
+executor_llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash-001", api_key=SecretStr(os.getenv("GEMINI_API_KEY")))
+planner_llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash-thinking-exp-01-21", api_key=SecretStr(os.getenv("GEMINI_API_KEY")))
+
 
 async def analyze_company(company_name, company_ticker, market_cap, date, results):
     # Create a controller enforcing the SentimentAnalysis schema
@@ -65,25 +82,22 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
         planner_llm=executor_llm,
         llm=executor_llm,
         system_prompt_class=MySystemPrompt,
-        save_conversation_path=f"logs/conversation_{company_name}.json",
+        save_conversation_path=os.path.join(
+            convo_dir, f"conversation_{company_name}.json"),
         controller=controller,  # Enforce structured output
-        generate_gif=f"gifs/{company_name}_sentiment.gif"
+        generate_gif=os.path.join(gif_dir, f"{company_name}_sentiment.gif")
     )
 
     history = await agent.run()
     sentiment_result = history.final_result()
 
     if sentiment_result:
-        # Ensure the expected "results" field exists
-        if "results" not in sentiment_result:
-            # Sometimes the AI might return a single result as a dictionary instead of a list
-            logging.warning(f"⚠️ WARNING: 'results' field is missing. Attempting to fix response structure.")
-            sentiment_result = {"results": [sentiment_result]}  # Wrap it in a list
-            
         try:
-            parsed: SentimentResult = SentimentResult.model_validate_json(sentiment_result)
+            parsed: SentimentResult = SentimentResult.model_validate_json(
+                sentiment_result)
         except Exception as e:
-            logging.error(f"❌ ERROR: Failed to parse sentiment data for {company_name} ({company_ticker})")
+            logging.error(
+                f"❌ ERROR: Failed to parse sentiment data for {company_name} ({company_ticker})")
             logging.error(f"📅 Date: {date}")
             logging.error(f"⚠️ Raw response: {sentiment_result}")
             logging.error(f"🔴 Parsing error: {e}")
@@ -92,33 +106,35 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
                 "company_name": company_name,
                 "ticker": company_ticker,
                 "market_cap": market_cap,
-                "sentiment_result": "No data due to error in parsing the results",  # Ensure it's a dictionary
-                #"raw_result": str(history)  # Store the raw result for debugging
+                # Ensure it's a dictionary
+                "sentiment_result": "No data due to error in parsing the results",
+                # "raw_result": str(history)  # Store the raw result for debugging
             })
             return  # Skip this company if parsing fails
 
-        for result in parsed.results:
-            logging.info(f"✅ RESULT ADDED: {result.company_name} ({result.company_ticker})")
-            logging.info(f"📅 Date: {date}")
-            logging.info(f"💰 Market Cap: {market_cap}")
-            logging.info(f"📊 Sentiment Score: {result.sentiment_score}")
-            logging.info(f"📝 Summary: {result.summary}")
-        
-            filename = f"sentiment_analysis_results_{company_name}.json"
-            with open(filename, "w") as f:
-                json.dump(result, f, indent=4)
+        logging.info(
+            f"✅ RESULT ADDED: {parsed.company_name} ({parsed.company_ticker})")
+        logging.info(f"📅 Date: {date}")
+        logging.info(f"💰 Market Cap: {market_cap}")
+        logging.info(f"📊 Sentiment Score: {parsed.sentiment_score}")
+        logging.info(f"📝 Summary: {parsed.summary}")
 
-            results.append({
-                "date_of_earnings_report": date,
-                "company_name": result.company_name,
-                "ticker": result.company_ticker,
-                "market_cap": market_cap,
-                "sentiment_result": result.sentiment_result,  # Ensure it's a dictionary
-                "summary": result.summary,
-                "sources": result.sources
-            })
+        filename = f"sentiment_analysis_results_{company_name}.json"
+        with open(filename, "w") as f:
+            json.dump(parsed, f, indent=4)
+
+        results.append({
+            "date_of_earnings_report": date,
+            "company_name": parsed.company_name,
+            "ticker": parsed.company_ticker,
+            "market_cap": market_cap,
+            "sentiment_result": parsed.sentiment_result,  # Ensure it's a dictionary
+            "summary": parsed.summary,
+            "sources": parsed.sources
+        })
     else:
-        logging.error(f"❌ ERROR: No valid sentiment data for {company_name} ({company_ticker})")
+        logging.error(
+            f"❌ ERROR: No valid sentiment data for {company_name} ({company_ticker})")
         logging.error(f"📅 Date: {date}")
         logging.error("⚠️ Storing raw response for debugging.")
         results.append({
@@ -127,14 +143,14 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
             "ticker": company_ticker,
             "market_cap": market_cap,
             "sentiment_result": "No sentiment data found.",  # Ensure it's a dictionary
-            #"raw_result": str(history)  # Store the raw result for debugging
+            # "raw_result": str(history)  # Store the raw result for debugging
         })
 
 
 async def main():
     start_time = time.time()  # Start timing
     all_results = []
-    dates = get_next_business_days(5, start_date=get_next_monday())
+    dates = get_next_business_days(1, start_date=get_next_monday())
 
     logging.info(f"\n{'=' * 100}")
     logging.info("🚀 STARTING SENTIMENT ANALYSIS")
@@ -148,17 +164,20 @@ async def main():
         earnings = fetch_earnings(date)
 
         # Sort by market cap and take the top 5
-        top_earnings = sorted(earnings, key=lambda x: x.get('marketCap', 0), reverse=True)[:3]
+        top_earnings = sorted(earnings, key=lambda x: x.get(
+            'marketCap', 0), reverse=True)[:2]
         logging.info(json.dumps(top_earnings, indent=4))
 
         # Analyze each company and store results
-                # Process companies **sequentially** instead of using asyncio.gather
+        # Process companies **sequentially** instead of using asyncio.gather
         for company in top_earnings:
             await analyze_company(company['name'], company['symbol'], company['marketCap'], date, all_results)
+            # Flush the log to ensure all messages are written out
+            logging.handlers[0].flush()
 
-        # fuck paraallelism 
-        #tasks = [analyze_company(company['name'], company['symbol'], company['marketCap'], date, all_results) for company in top_earnings]
-        #await asyncio.gather(*tasks)
+        # fuck paraallelism
+        # tasks = [analyze_company(company['name'], company['symbol'], company['marketCap'], date, all_results) for company in top_earnings]
+        # await asyncio.gather(*tasks)
 
     # Save results to a file
     start_date = get_next_monday()
