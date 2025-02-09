@@ -12,6 +12,10 @@ from fetch_nasdaq_prices import get_next_business_days, fetch_earnings, get_next
 from pydantic import BaseModel
 from typing import List
 
+DATE_TO_START_ANALYSIS = "2025-02-17"
+TOP_N_COMPANIES_BY_MARKET_CAP = 3
+NUM_DAYS_LOOKAHEAD = 5
+6
 # Set up logging to both console and file
 out_dir = "output"
 log_time = time.strftime('%Y%m%d_%H%M')
@@ -26,7 +30,7 @@ os.makedirs(convo_dir, exist_ok=True)  # Ensure the log directory exists
 log_filename = os.path.join(log_dir, "output.log")
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(message)s",
     handlers=[
         logging.StreamHandler(),  # Output to console
@@ -41,22 +45,29 @@ class SentimentResult(BaseModel):
     company_name: str
     company_ticker: str
     sentiment_score: int
-    summary: str
+    at_a_glance: str
+    detailed_summary: str
     sources: List[str]
 
 # Define custom system prompt
-
 
 class MySystemPrompt(SystemPrompt):
     def important_rules(self) -> str:
         existing_rules = super().important_rules()
         new_rules = """
-9. USE YAHOO FINANCE RULE:
-- ALWAYS BEGIN BY SEARCHING FOR THE COMPANY ON Google with "Yahoo Finance" in the search query
+            9. USE GOOGLE FINANCE FINANCE RULE:
+            - ALWAYS BEGIN BY SEARCHING FOR THE COMPANY ON Google with "GOOGLE FINANCE Finance" in the search query
+            - This is USUALLY found at this URL. Note the pattern at the end includes the company ticker.
+            - https://www.google.com/finance/quote/NVDA:\{company_ticker\}
 
-10. JSON RESPONSE RULE:
-- REMEMBER - your response must be valid JSON with the required fields.
-"""
+            10. JSON RESPONSE RULE:
+            - REMEMBER - your response must be valid JSON with the required fields. 
+            - detailed_summary should contain a comprehensive analysis of the sentiment, including direct quotes from the articles.
+            - at_a_glance should be a concise summary of the sentiment.
+
+            11. SOURCES RULE:
+            - sources should list all the URLs of the articles used in the analysis.
+            """
         return f'{existing_rules}\n{new_rules}'
 
 
@@ -74,10 +85,12 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
     controller = Controller(output_model=SentimentResult)
 
     agent = Agent(
-        task=f"Search for {company_name} ({company_ticker}) on Yahoo Finance."
-             f"Open and read five of the recent news articles and determine the sentiment."
+        task=f"Search for {company_name} ({company_ticker}) on Google Finance."
+             f"Open and read the recent news articles until you are confidently able to determine the sentiment."
+             f"Read at least five articles, but read more if you need to."
              f"If the company is not found, report that the company was not found."
-             f"Determine a sentiment score (1-100) and provide a brief summary."
+             f"Determine a sentiment score (1-100) and provide a single at-a-glance evaluation."
+             f"Additionally provide a more exhaustive followup summary paragraph citing insights derived from the articles."
              f"Include sources for the information found. Use direct quotes in your summary when possible.",
         planner_llm=executor_llm,
         llm=executor_llm,
@@ -108,7 +121,6 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
                 "market_cap": market_cap,
                 # Ensure it's a dictionary
                 "sentiment_result": "No data due to error in parsing the results",
-                # "raw_result": str(history)  # Store the raw result for debugging
             })
             return  # Skip this company if parsing fails
 
@@ -117,19 +129,20 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
         logging.info(f"📅 Date: {date}")
         logging.info(f"💰 Market Cap: {market_cap}")
         logging.info(f"📊 Sentiment Score: {parsed.sentiment_score}")
-        logging.info(f"📝 Summary: {parsed.summary}")
+        logging.info(f"📝 Summary: {parsed.detailed_summary}")
 
         filename = f"sentiment_analysis_results_{company_name}.json"
-        with open(filename, "w") as f:
-            json.dump(parsed, f, indent=4)
+        with open(os.path.join(log_dir, filename), "w") as f:
+            f.write(parsed.model_dump_json(indent=4))
 
         results.append({
             "date_of_earnings_report": date,
             "company_name": parsed.company_name,
             "ticker": parsed.company_ticker,
             "market_cap": market_cap,
-            "sentiment_result": parsed.sentiment_result,  # Ensure it's a dictionary
-            "summary": parsed.summary,
+            "sentiment_score": parsed.sentiment_score,  # Ensure it's a dictionary
+            "at_a_glance": parsed.at_a_glance,
+            "summary": parsed.detailed_summary,
             "sources": parsed.sources
         })
     else:
@@ -150,7 +163,7 @@ async def analyze_company(company_name, company_ticker, market_cap, date, result
 async def main():
     start_time = time.time()  # Start timing
     all_results = []
-    dates = get_next_business_days(1, start_date=get_next_monday())
+    dates = get_next_business_days(NUM_DAYS_LOOKAHEAD, start_date=DATE_TO_START_ANALYSIS)
 
     logging.info(f"\n{'=' * 100}")
     logging.info("🚀 STARTING SENTIMENT ANALYSIS")
@@ -165,25 +178,34 @@ async def main():
 
         # Sort by market cap and take the top 5
         top_earnings = sorted(earnings, key=lambda x: x.get(
-            'marketCap', 0), reverse=True)[:2]
+            'marketCap', 0), reverse=True)[:TOP_N_COMPANIES_BY_MARKET_CAP]
         logging.info(json.dumps(top_earnings, indent=4))
 
         # Analyze each company and store results
         # Process companies **sequentially** instead of using asyncio.gather
         for company in top_earnings:
-            await analyze_company(company['name'], company['symbol'], company['marketCap'], date, all_results)
+            try:
+                await asyncio.wait_for(
+                    analyze_company(
+                        company['name'], company['symbol'], company['marketCap'], date, all_results),
+                    # Fifteen minute Timeout
+                    timeout=60*15
+                )
+            except Exception as e:
+                logging.error(
+                    f"❌ ERROR: Failed to analyze {company['name']} ({company['symbol']})")
+                logging.error(f"🔴 Error: {e}")
             # Flush the log to ensure all messages are written out
-            logging.handlers[0].flush()
+            for handler in logging.getLogger().handlers:
+                handler.flush()
 
         # fuck paraallelism
         # tasks = [analyze_company(company['name'], company['symbol'], company['marketCap'], date, all_results) for company in top_earnings]
         # await asyncio.gather(*tasks)
 
     # Save results to a file
-    start_date = get_next_monday()
-    filename = f"sentiment_analysis_results_{start_date}.json"
-
-    with open(filename, "w") as f:
+    filename = f"sentiment_analysis_results.json"
+    with open(os.path.join(out_dir, log_time, filename), "w") as f:
         json.dump(all_results, f, indent=4)
 
     logging.info(f"\n{'=' * 100}")
@@ -195,4 +217,4 @@ async def main():
     logging.info(f"⏱️ Total execution time: {execution_time:.2f} seconds")
 
 # Run the async function
-asyncio.run(main())
+asyncio.run(main(), debug=True)

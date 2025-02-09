@@ -6,3 +6,4 @@ __pycache__/
 .env
 sentiment_analysis*.json
 output/
+sentiment_infographic.png
