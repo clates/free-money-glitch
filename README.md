@@ -16,7 +16,7 @@ The tool fetches upcoming earnings reports from NASDAQ, searches for recent news
 
 - 🔍 **Automated Earnings Data Fetching**: Retrieves upcoming earnings reports from NASDAQ API
 - 📰 **News Aggregation**: Searches Google Finance for recent news articles about target companies
-- 🤖 **AI-Powered Sentiment Analysis**: Uses LLM (Gemini 2.0) to analyze news sentiment
+- 🤖 **AI-Powered Sentiment Analysis**: Uses LLM (Google Gemini or OpenAI) to analyze news sentiment
 - 📊 **Sentiment Scoring**: Generates 1-100 sentiment scores for each company
 - 🎨 **Visual Reports**: Creates infographic summaries with color-coded sentiment indicators
 - 🎬 **Process Recording**: Generates GIFs showing the browser automation process
@@ -66,7 +66,7 @@ cp .env.example .env
 ```env
 ANONYMIZED_TELEMETRY=false
 GEMINI_API_KEY=your_gemini_api_key_here
-# OPENAI_API_KEY=your_openai_key_here  # Optional alternative
+#OPENAI_API_KEY=your_openai_key_here
 ```
 
 You can obtain a Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey).
@@ -175,4 +175,4 @@ This is an open-source educational project. Use at your own risk.
 
 ---
 
-**Note**: API costs apply for using Google Gemini or OpenAI. Gemini 2.0 Flash is recommended for cost-effectiveness.
+**Note**: API costs apply for using Google Gemini or OpenAI. The project is configured to use Gemini 2.0 Flash by default for cost-effectiveness.
